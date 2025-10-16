@@ -31,7 +31,6 @@ volatile uint32_t end_time = 0;
 volatile uint32_t pulse_width_us = 0;
 
 volatile bool displayCm = true; // true for cm, false for inches
-volatile bool displayInches = false;
 volatile float displayValue = 0.0;
 volatile int DigitSelect = 0; // Current digit to update on SSD
 volatile float distance = 0.0; 
@@ -44,7 +43,7 @@ volatile uint32_t currentEdge = 0;
 volatile uint32_t seconds = 0;
 volatile uint8_t trigger_distance = 0;
 
-float getdistance(void) {
+float measure_distance(void) {
     if (displayCm){
         distance = pulse_width_us / 58.3; 
     } else {
@@ -53,9 +52,11 @@ float getdistance(void) {
     if (distance > 99.99) {
         distance = 99.99; // Cap at 99.99
     }
+    return distance;
 }
 
 void update_display(void);
+
 void systick_init(void) {
   SysTick_Config(SystemCoreClock/500); // Exactly 0.5 second or 500 ms
   NVIC_SetPriority(SysTick_IRQn, 0);
@@ -84,8 +85,9 @@ void tim5_init(void) {
 }
 void TIM5_IRQHandler(void) {
    if (TIM5->SR & TIM_SR_UIF) { // check if update interrupt flag is set
+    TIM5->CR1 &= ~TIM_CR1_CEN; // Stop timer
+    TRIG_PORT->ODR &= ~(1 << TRIG_PIN); // Ensure trigger pin is low
        TIM5->SR &= ~TIM_SR_UIF; // clear the update interrupt flag
-       
    }
 }
 
@@ -144,7 +146,7 @@ void tim2_init(void) {
 
 void TIM2_IRQHandler(void){
    if (TIM2->SR & TIM_SR_UIF) { 
-        SSD_update(DigitSelect, (int)(getdistance() * 100) , 2);
+        SSD_update(DigitSelect, (int)(measure_distance() * 100) , 2);
         DigitSelect = (DigitSelect + 1) % 4; // Cycle through 0-3
        TIM2->SR &= ~TIM_SR_UIF; // clear the update interrupt flag
        }
@@ -165,21 +167,6 @@ void USART2_init(void) {
    USART2->BRR = FREQUENCY / USART_BAUDRATE; // Set baud rate (APB1 clock is SystemCoreClock/4)
    USART2->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE; // Enable TX, RX, and USART
 }
-
-
-void measure_distance(void) {
-   // Calculate distance from pulse width
-   float distance_cm = (pulse_width_us * 0.0343f) / 2.0f;
-   float distance_inches = distance_cm / 2.54f;
-  
-   displayValue = displayCm ? distance_cm : distance_inches;
-  
-   // Cap at 99.99
-   if(displayValue > 99.99f) {
-       displayValue = 99.99f;
-   }
-}
-
 
 void update_display(void) {
    int displayInt = (int)(displayValue * 100); // Convert to hundredths
@@ -204,7 +191,6 @@ void update_display(void) {
 
 int main(void) {
    // Initialize all peripherals
-   GPIO_init();
    USART2_init();
    systick_init();
    tim2_init();   
@@ -221,7 +207,6 @@ int main(void) {
        if (trigger_distance) {
            trigger_distance = 0;
            measure_distance(); // Calculate distance from pulse width
-           send_to_usart();   // Send to serial monitor
            // Display updates happen in TIM2 interrupt
        }
    }
