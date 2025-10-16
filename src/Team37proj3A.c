@@ -65,11 +65,8 @@ void systick_init(void) {
 
 void SysTick_Handler(void) {
    trigger_distance = 1; // tell main to trigger distance measurement
+   TIM5->CNT = TIM_CR1_CEN; // Start timer
    TRIG_PORT->ODR |= (1 << TRIG_PIN); // Set the trigger pin high
-   currentEdge = TIM5->CNT; // Get the current timer count
-   while ((TIM5->CNT - currentEdge) < 10); // Wait for 10us
-   TRIG_PORT->ODR &= ~(1 << TRIG_PIN); // Set the trigger pin low
-  
 }
 
 
@@ -78,8 +75,8 @@ void tim5_init(void) {
    TIM5->PSC = 15999; // Prescaler for 1 MHz timer clock (16 MHz / 16)
    TIM5->ARR = 0xFFFFFFFF; // Auto-reload for 50 ms at 16 MHz / 16
    TIM5->CR1 |= TIM_CR1_CEN; // Start timer
-   TIM5->DIER |= TIM_DIER_UIE; // Enable update interrupt
-   TIM5->SR &= ~TIM_SR_UIF; // Clear update flag
+    TIM5->DIER |= TIM_DIER_UIE; // Enable update interrupt
+
    NVIC_EnableIRQ(TIM5_IRQn);
    NVIC_SetPriority(TIM5_IRQn, 1); // Lower priority than TIM2
 }
