@@ -12,6 +12,7 @@
 
 /* Function Prototypes */
 int main(void) __attribute__((used));
+void send_trigger_pulse(void);
 
 // USART2 definitions for serial output
 #define USART_TX_PIN 2  // PA2
@@ -55,28 +56,24 @@ float measure_distance(void) {
     return distance;
 }
 
-void update_display(void);
-
 void systick_init(void) {
   SysTick_Config(SystemCoreClock/500); // Exactly 0.5 second or 500 ms
   NVIC_SetPriority(SysTick_IRQn, 0);
 }
 
-
 void SysTick_Handler(void) {
-   trigger_distance = 1; // tell main to trigger distance measurement
+    send_trigger_pulse();  // trigger the sensor
+    trigger_distance = 1; // tell main to trigger distance measurement
    TIM5->CNT = TIM_CR1_CEN; // Start timer
    TRIG_PORT->ODR |= (1 << TRIG_PIN); // Set the trigger pin high
 }
 
-
 void tim5_init(void) {
    RCC->APB1ENR |= RCC_APB1ENR_TIM5EN;
-   TIM5->PSC = 15999; // Prescaler for 1 MHz timer clock (16 MHz / 16)
+   TIM5->PSC = 15; // Prescaler for 1 MHz timer clock (16 MHz / 16)
    TIM5->ARR = 0xFFFFFFFF; // Auto-reload for 50 ms at 16 MHz / 16
    TIM5->CR1 |= TIM_CR1_CEN; // Start timer
     TIM5->DIER |= TIM_DIER_UIE; // Enable update interrupt
-
    NVIC_EnableIRQ(TIM5_IRQn);
    NVIC_SetPriority(TIM5_IRQn, 1); // Lower priority than TIM2
 }
@@ -119,16 +116,40 @@ void EXTI15_10_IRQHandler(void) {
    }
 }
 
+void trig_init(void) {
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; // Enable GPIOA clock
+    TRIG_PORT->MODER &= ~(3 << (TRIG_PIN * 2)); // Clear mode bits
+    TRIG_PORT->MODER |= (1 << (TRIG_PIN * 2));  // Set as output
+}
+void send_trigger_pulse(void) {
+    TRIG_PORT->ODR |= (1 << TRIG_PIN);     // Set TRIG high
+    for (volatile int i = 0; i < 160; i++); // Delay ~10 µs (assuming 16 MHz CPU)
+    TRIG_PORT->ODR &= ~(1 << TRIG_PIN);    // Set TRIG low
+}
 
 void configure_button_interrupt(void) {
    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; // Enable system configuration controller clock
-   SYSCFG->EXTICR[3] |= SYSCFG_EXTICR4_EXTI13_PC; // Map EXTI13 to PC13
-   EXTI->IMR |= EXTI_IMR_MR13; // Unmask EXTI13
-   EXTI->FTSR |= EXTI_FTSR_TR13; // Trigger on falling edge
+   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN; // Enable GPIOC clock
+   EXTI->IMR |= (1 << BTN_PIN); // Unmask EXTI13
+   EXTI->FTSR |= (1 << BTN_PIN); // Trigger on falling edge
+   BTN_PORT->MODER &= ~(3 << (BTN_PIN * 2)); // Set BTN_PIN as input by clearing MODER bits
+   SYSCFG->EXTICR[3] |= (2<< (1*4));
    NVIC_EnableIRQ(EXTI15_10_IRQn); // Enable EXTI line[15:10] interrupts in NVIC
-   NVIC_SetPriority(EXTI15_10_IRQn, 2); // Set priority (lower than TIM2 and TIM5)
+   NVIC_SetPriority(EXTI15_10_IRQn, 0); // Set priority (lower than TIM2 and TIM5)
 }
 
+void configure_echo_interrupt(void) {
+   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN; // Enable GPIOB clock
+   RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; // Enable system configuration controller clock
+   EXTI->IMR |= (1 << ECHO_PIN); // Unmask EXTI0
+   EXTI->RTSR |= (1 << ECHO_PIN); // Trigger on rising edge
+   EXTI->FTSR |= (1 << ECHO_PIN); // Trigger on falling edge
+   ECHO_PORT->MODER &= ~(3 << (ECHO_PIN * 2)); // Set ECHO_PIN as input by clearing MODER bits
+   SYSCFG->EXTICR[0] &= ~(0xF << (0 * 4)); // Clear EXTI0 bits
+   SYSCFG->EXTICR[0] |= (1 << (0 * 4));    // Map EXTI0 to PB0
+   NVIC_EnableIRQ(EXTI0_IRQn); // Enable EXTI0 interrupt in NVIC
+   NVIC_SetPriority(EXTI0_IRQn, 1); // Set priority (lower than TIM2)
+}
 
 void tim2_init(void) {
     RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
@@ -165,27 +186,6 @@ void USART2_init(void) {
    USART2->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE; // Enable TX, RX, and USART
 }
 
-void update_display(void) {
-   int displayInt = (int)(displayValue * 100); // Convert to hundredths
-  
-   // Handle leading zero suppression for values < 10.00
-   if(displayValue < 10.00f) {
-       // First digit should be blank
-       SSD_update(0, 15, 0); // 15 is the blank pattern
-       // Display remaining digits
-       SSD_update(1, (displayInt / 100) % 10, 1); // First displayed digit with decimal point
-       SSD_update(2, (displayInt / 10) % 10, 0);
-       SSD_update(3, displayInt % 10, 0);
-   } else {
-       // Normal display for values >= 10.00
-       SSD_update(0, (displayInt / 1000) % 10, 0);
-       SSD_update(1, (displayInt / 100) % 10, 1); // Second digit with decimal point
-       SSD_update(2, (displayInt / 10) % 10, 0);
-       SSD_update(3, displayInt % 10, 0);
-   }
-   
-}
-
 int main(void) {
    // Initialize all peripherals
    USART2_init();
@@ -194,18 +194,8 @@ int main(void) {
    tim5_init();
    configure_button_interrupt();
    SSD_init();
-  
-   // Initial display setup
-   update_display();
+   trig_init();
+    configure_echo_interrupt();
 
-
-
-   while(1) {
-       if (trigger_distance) {
-           trigger_distance = 0;
-           measure_distance(); // Calculate distance from pulse width
-           // Display updates happen in TIM2 interrupt
-       }
+   while(1) {}
    }
-   return 0; // Never reached in embedded systems, but satisfies compiler
-}
