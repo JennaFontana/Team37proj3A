@@ -10,38 +10,50 @@
 #include <stdint.h>
 #include <math.h>
 
+/* Function Prototypes */
+int main(void) __attribute__((used));
 
 // USART2 definitions for serial output
 #define USART_TX_PIN 2  // PA2
 #define USART_RX_PIN 3  // PA3
 #define USART_BAUDRATE 115200
 
-
 #define BTN_PIN 13 //PC13
 #define BTN_PORT GPIOC
 #define FREQUENCY 16000000
 
-
-#define TRIG_GPIO GPIOA      // Example
-#define TRIG_PIN  (1 << 4) // PA4
+#define TRIG_PORT GPIOA
+#define TRIG_PIN 4 // PA4
 
 
 volatile uint32_t start_time = 0;
 volatile uint32_t end_time = 0;
 volatile uint32_t pulse_width_us = 0;
+
 volatile bool displayCm = true; // true for cm, false for inches
 volatile bool displayInches = false;
 volatile float displayValue = 0.0;
-#define ECHO_GPIO GPIOB      // Using GPIOB for PB0
-#define ECHO_PIN (1 << 0)    // PB0
-#define ECHO_PIN_NUMBER 0    // Pin number for EXTI configuration
-#define TRIG_PORT GPIOA
+volatile int DigitSelect = 0; // Current digit to update on SSD
+volatile float distance = 0.0; 
+
+#define ECHO_PORT GPIOB      // Using GPIOB for PB0
+#define ECHO_PIN 0    // PB0
 
 
 volatile uint32_t currentEdge = 0;
 volatile uint32_t seconds = 0;
 volatile uint8_t trigger_distance = 0;
 
+float getdistance(void) {
+    if (displayCm){
+        distance = pulse_width_us / 58.3; 
+    } else {
+        distance = pulse_width_us / 148.0;
+    }
+    if (distance > 99.99) {
+        distance = 99.99; // Cap at 99.99
+    }
+}
 
 void update_display(void);
 void systick_init(void) {
@@ -73,14 +85,14 @@ void tim5_init(void) {
 void TIM5_IRQHandler(void) {
    if (TIM5->SR & TIM_SR_UIF) { // check if update interrupt flag is set
        TIM5->SR &= ~TIM_SR_UIF; // clear the update interrupt flag
-       seconds++; // Increment seconds counter
+       
    }
 }
 
 
 void EXTI0_IRQHandler(void) {
-   if(EXTI->PR & (1 << ECHO_PIN_NUMBER)) {  // Check pending bit for PB0
-       if (ECHO_GPIO->IDR & ECHO_PIN) { // Rising edge detected
+   if(EXTI->PR & (1 << 0)) {  // Check pending bit for PB0
+       if (ECHO_PORT->IDR & ECHO_PIN) { // Rising edge detected
            start_time = TIM5->CNT; // Capture start time
        } else { // Falling edge detected
            end_time = TIM5->CNT; // Capture end time
@@ -95,7 +107,7 @@ void EXTI0_IRQHandler(void) {
 
 
        }
-       EXTI->PR |= (1 << ECHO_PIN_NUMBER);  // Clear pending bit
+       EXTI->PR |= (1 << ECHO_PIN);  // Clear pending bit
    }
 }
 
@@ -120,33 +132,29 @@ void configure_button_interrupt(void) {
 
 
 void tim2_init(void) {
-  RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
-  TIM2->PSC = 15;
-  TIM2->ARR = 499;
-  TIM2->DIER |= TIM_DIER_UIE;
-  TIM2->SR &= ~TIM_SR_UIF;
-  NVIC_EnableIRQ(TIM2_IRQn);
-  NVIC_SetPriority(TIM2_IRQn, 1);
-  TIM2->CR1 |= TIM_CR1_CEN; // Start timer (only once)
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+    TIM2->PSC = 15;
+    TIM2->ARR = 499;
+    TIM2->DIER |= TIM_DIER_UIE;
+    TIM2->SR &= ~TIM_SR_UIF;
+    NVIC_EnableIRQ(TIM2_IRQn);
+    NVIC_SetPriority(TIM2_IRQn, 1);
+    TIM2->CR1 |= TIM_CR1_CEN; // Start timer (only once)
 }
-void TIM2_IRQHandler(void) {
-   static uint32_t update_count = 0;
-  
-   if (TIM2->SR & TIM_SR_UIF) { // check if update interrupt flag is set
+
+void TIM2_IRQHandler(void){
+   if (TIM2->SR & TIM_SR_UIF) { 
+        SSD_update(DigitSelect, (int)(getdistance() * 100) , 2);
+        DigitSelect = (DigitSelect + 1) % 4; // Cycle through 0-3
        TIM2->SR &= ~TIM_SR_UIF; // clear the update interrupt flag
-      
-       update_count++;
-       if(update_count >= 4) { // Every 4 * 0.5ms = 2ms
-           update_count = 0;
-           update_display(); // Update SSD display
        }
    }
-}
 
 
 void USART2_init(void) {
    // Enable USART2 clock
    RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
+   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; // Enable GPIOA clock
   
    // Configure USART2 pins (PA2 and PA3)
    GPIOA->MODER &= ~(0x3 << (USART_TX_PIN * 2) | 0x3 << (USART_RX_PIN * 2));
@@ -154,20 +162,8 @@ void USART2_init(void) {
    GPIOA->AFR[0] |= 0x7 << (USART_TX_PIN * 4) | 0x7 << (USART_RX_PIN * 4); // AF7 for USART2
   
    // Configure USART2
-   USART2->BRR = SystemCoreClock / 4 / USART_BAUDRATE; // Set baud rate (APB1 clock is SystemCoreClock/4)
+   USART2->BRR = FREQUENCY / USART_BAUDRATE; // Set baud rate (APB1 clock is SystemCoreClock/4)
    USART2->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE; // Enable TX, RX, and USART
-}
-
-
-void send_to_usart(void) {
-   char buffer[50];
-   int len = snprintf(buffer, sizeof(buffer), "Distance: %.2f %s\r\n",
-                     displayValue, displayCm ? "cm" : "in");
-  
-   for(int i = 0; i < len; i++) {
-       while(!(USART2->SR & USART_SR_TXE)); // Wait for empty transmit buffer
-       USART2->DR = buffer[i];
-   }
 }
 
 
@@ -193,51 +189,19 @@ void update_display(void) {
        // First digit should be blank
        SSD_update(0, 15, 0); // 15 is the blank pattern
        // Display remaining digits
-       SSD_update(1, (displayInt / 100) % 10, 1); // Digit with decimal point
+       SSD_update(1, (displayInt / 100) % 10, 1); // First displayed digit with decimal point
        SSD_update(2, (displayInt / 10) % 10, 0);
        SSD_update(3, displayInt % 10, 0);
    } else {
        // Normal display for values >= 10.00
        SSD_update(0, (displayInt / 1000) % 10, 0);
-       SSD_update(1, (displayInt / 100) % 10, 1); // Digit with decimal point
+       SSD_update(1, (displayInt / 100) % 10, 1); // Second digit with decimal point
        SSD_update(2, (displayInt / 10) % 10, 0);
        SSD_update(3, displayInt % 10, 0);
    }
+   
 }
 
-
-void GPIO_init(void) {
-  RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN | RCC_AHB1ENR_GPIOCEN; // Enable GPIOA, GPIOB and GPIOC clocks
-  RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; // Enable SYSCFG for EXTI
-  
-  // Configure TRIG_PIN (PA4) as output
-  TRIG_GPIO->MODER &= ~(0x3 << (4 * 2)); // Clear mode bits for PA4
-  TRIG_GPIO->MODER |= (0x1 << (4 * 2));  // Set PA4 as general purpose output
-  TRIG_GPIO->OTYPER &= ~(1 << 4);        // Set PA4 as push-pull
-  TRIG_GPIO->OSPEEDR |= (0x3 << (4 * 2)); // Set PA4 as high speed
-  TRIG_GPIO->PUPDR &= ~(0x3 << (4 * 2)); // No pull-up, pull-down for PA4
-
-
-  // Configure ECHO_PIN (PB0) as input with EXTI
-  ECHO_GPIO->MODER &= ~(0x3 << (ECHO_PIN_NUMBER * 2)); // Clear mode bits for PB0
-  ECHO_GPIO->PUPDR &= ~(0x3 << (ECHO_PIN_NUMBER * 2)); // No pull-up, pull-down for PB0
-  
-  // Configure EXTI for ECHO_PIN (PB0)
-  SYSCFG->EXTICR[0] &= ~SYSCFG_EXTICR1_EXTI0; // Clear EXTI0 bits
-  SYSCFG->EXTICR[0] |= SYSCFG_EXTICR1_EXTI0_PB; // Map PB0 to EXTI0
-  EXTI->IMR |= (1 << ECHO_PIN_NUMBER); // Enable interrupt
-  EXTI->RTSR |= (1 << ECHO_PIN_NUMBER); // Enable rising edge trigger
-  EXTI->FTSR |= (1 << ECHO_PIN_NUMBER); // Enable falling edge trigger
-  
-  // Enable EXTI0 interrupt in NVIC
-  NVIC_EnableIRQ(EXTI0_IRQn);
-  NVIC_SetPriority(EXTI0_IRQn, 0); // Highest priority for accurate timing
-
-
-  // Configure BTN_PIN (PC13) as input
-  BTN_PORT->MODER &= ~(0x3 << (BTN_PIN * 2)); // Clear mode bits for PC13
-  BTN_PORT->PUPDR |= (0x2 << (BTN_PIN * 2));  // Set PC13 with pull-down resistor
-}
 int main(void) {
    // Initialize all peripherals
    GPIO_init();
@@ -252,6 +216,7 @@ int main(void) {
    update_display();
 
 
+
    while(1) {
        if (trigger_distance) {
            trigger_distance = 0;
@@ -262,4 +227,3 @@ int main(void) {
    }
    return 0; // Never reached in embedded systems, but satisfies compiler
 }
-
