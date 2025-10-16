@@ -57,7 +57,7 @@ float measure_distance(void) {
 }
 
 void systick_init(void) {
-  SysTick_Config(SystemCoreClock/500); // Exactly 0.5 second or 500 ms
+  SysTick_Config(FREQUENCY/2); // Exactly 0.5 second or 500 ms
   NVIC_SetPriority(SysTick_IRQn, 0);
 }
 
@@ -88,7 +88,7 @@ void TIM5_IRQHandler(void) {
 
 void EXTI0_IRQHandler(void) {
    if(EXTI->PR & (1 << 0)) {  // Check pending bit for PB0
-       if (ECHO_PORT->IDR & ECHO_PIN) { // Rising edge detected
+       if (ECHO_PORT->IDR & (1 << ECHO_PIN)) { // Rising edge detected
            start_time = TIM5->CNT; // Capture start time
        } else { // Falling edge detected
            end_time = TIM5->CNT; // Capture end time
