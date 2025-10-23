@@ -190,10 +190,11 @@ void tim8_init(void) {
     RCC->APB2ENR |= RCC_APB2ENR_TIM8EN; // Enable TIM8 clock
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; // Enable GPIOA clock
 
+    
     GPIOC->MODER &= ~(0x3 << (SERVO3_PIN * 2));
 	GPIOC->MODER |=  (0x2 << (SERVO3_PIN * 2)); // Alternate function
 	GPIOC->AFR[0] &= ~(0xF << (SERVO3_PIN * 4));
-	GPIOC->AFR[0] |=  (0x2 << (SERVO3_PIN * 4));
+	GPIOC->AFR[0] |=  (0x3 << (SERVO3_PIN * 4));
 
     TIM8->PSC = (FREQUENCY/1000000)-1; // Prescaler for 1 us
     TIM8->ARR = 19999; // Auto-reload for 20 ms period
