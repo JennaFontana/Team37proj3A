@@ -26,7 +26,6 @@ void send_trigger_pulse(void);
 #define TRIG_PORT GPIOA
 #define TRIG_PIN 4 // PA4
 
-
 volatile uint32_t start_time = 0;
 volatile uint32_t end_time = 0;
 volatile uint32_t pulse_width_us = 0;
@@ -39,10 +38,14 @@ volatile float distance = 0.0;
 #define ECHO_PORT GPIOB      // Using GPIOB for PB0
 #define ECHO_PIN 0    // PB0
 
-
 volatile uint32_t currentEdge = 0;
 volatile uint32_t seconds = 0;
-volatile uint8_t trigger_distance = 0;
+
+//Part B
+volatile uint32_t pulse_width = 0;
+#define SERVO3_PIN 6 // PC6
+#define SERV0_PORT GPIOA
+int angle =0;
 
 float measure_distance(void) {
     if (displayCm){
@@ -63,9 +66,6 @@ void systick_init(void) {
 
 void SysTick_Handler(void) {
     send_trigger_pulse();  // trigger the sensor
-    trigger_distance = 1; // tell main to trigger distance measurement
-   TIM5->CNT = TIM_CR1_CEN; // Start timer
-   TRIG_PORT->ODR |= (1 << TRIG_PIN); // Set the trigger pin high
 }
 
 void tim5_init(void) {
@@ -99,7 +99,7 @@ void EXTI0_IRQHandler(void) {
                pulse_width_us = (0xFFFFFFFF - start_time) + end_time;
            }
            pulse_width_us /= 16; // Convert timer ticks to microseconds (1 tick = 1us)
-           trigger_distance = 1; // Signal main loop to process distance
+           
 
 
        }
@@ -185,6 +185,38 @@ void USART2_init(void) {
    USART2->BRR = FREQUENCY / USART_BAUDRATE; // Set baud rate (APB1 clock is SystemCoreClock/4)
    USART2->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE; // Enable TX, RX, and USART
 }
+//Part B
+void tim8_init(void) {
+    RCC->APB2ENR |= RCC_APB2ENR_TIM8EN; // Enable TIM8 clock
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; // Enable GPIOA clock
+
+    GPIOC->MODER &= ~(0x3 << (SERVO3_PIN * 2));
+	GPIOC->MODER |=  (0x2 << (SERVO3_PIN * 2)); // Alternate function
+	GPIOC->AFR[0] &= ~(0xF << (SERVO3_PIN * 4));
+	GPIOC->AFR[0] |=  (0x2 << (SERVO3_PIN * 4));
+
+    TIM8->PSC = (FREQUENCY/1000000)-1; // Prescaler for 1 us
+    TIM8->ARR = 19999; // Auto-reload for 20 ms period
+    TIM8->CCR1 = 1500; // how long the signal stays on (1.5 ms) 
+
+    TIM8->CCMR1 &= ~(TIM_CCMR1_OC1M); //clears the bits
+    TIM8->CCMR1 |= (6 << 4); // PWM mode 1 on channel 1 !!!!!!!!!!!!!
+    TIM8->CCMR1 |= TIM_CCMR1_OC1PE; // Enable preload for CCR1
+    TIM8->CCER |= TIM_CCER_CC1E; // Enables channel 1
+
+    TIM8->CR1 |= TIM_CR1_CEN; // Start timer
+    TIM8->CR1 |= TIM_CR1_ARPE; // Enable auto-reload preload
+    TIM8->EGR |= TIM_EGR_UG; // Generate an update event to load the registers (so PWM doesn't glitch in the middle of a pulse)
+    TIM8->BDTR |= TIM_BDTR_MOE; // Main output enable (necessary for advanced-control timers like TIM8)
+}
+
+
+void set_servo_angle(int32_t angle) {
+    pulse_width = 1500- 1000 *(angle / 90.0); // Map angle to pulse width (1 ms to 2 ms)
+    TIM8->CCR1 = pulse_width; // Update CCR1 with new pulse width
+}
+
+
 
 int main(void) {
    // Initialize all peripherals
@@ -195,7 +227,22 @@ int main(void) {
    configure_button_interrupt();
    SSD_init();
    trig_init();
-    configure_echo_interrupt();
+   configure_echo_interrupt();
 
-   while(1) {}
-   }
+    tim8_init(); // Part B: Initialize TIM3 for servo control
+    set_servo_angle(angle); // Set initial servo angle to 0 degrees
+   while(1) {
+    	for (angle = -45; angle <= 45; angle += 5) { 
+            set_servo_angle(angle); 
+            for (volatile int i = 0; i < 1000000; i++); // Delay (wait to get to angle)
+            send_trigger_pulse(); 
+            for (volatile int i = 0; i < 30000; i++); // Delay 
+            } 
+            for (angle = 45; angle >= -45; angle -= 5) 
+            { set_servo_angle(angle); 
+            for (volatile int i = 0; i < 1000000; i++); // Delay 
+            send_trigger_pulse(); 
+            for (volatile int i = 0; i < 30000; i++); // Delay } 
+            }
+        }
+    }
