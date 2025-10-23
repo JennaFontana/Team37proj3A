@@ -1,7 +1,7 @@
 /***********************************************
 * TEAM 37: J. PARK and J. FONTANA
-* CPEG222 Project1B, 10/3/25
-* NucleoF446RE CMSIS Sequence PMOD SSDs
+* CPEG222 Project3B, 10/20/25
+* NucleoF446RE 
 ***********************************************/
 #include "stm32f4xx.h"
 #include "SSD_Array.h"
@@ -18,6 +18,7 @@ void send_trigger_pulse(void);
 #define USART_TX_PIN 2  // PA2
 #define USART_RX_PIN 3  // PA3
 #define USART_BAUDRATE 115200
+#define UART_PORT GPIOA
 
 #define BTN_PIN 13 //PC13
 #define BTN_PORT GPIOC
@@ -172,9 +173,9 @@ void TIM2_IRQHandler(void){
 
 
 void USART2_init(void) {
-   // Enable USART2 clock
+    // Enable GPIOA and USART2 clocks
    RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
-   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; // Enable GPIOA clock
+   RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; 
   
    // Configure USART2 pins (PA2 and PA3)
    GPIOA->MODER &= ~(0x3 << (USART_TX_PIN * 2) | 0x3 << (USART_RX_PIN * 2));
@@ -190,11 +191,10 @@ void tim8_init(void) {
     RCC->APB2ENR |= RCC_APB2ENR_TIM8EN; // Enable TIM8 clock
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN; // Enable GPIOA clock
 
-    
     GPIOC->MODER &= ~(0x3 << (SERVO3_PIN * 2));
 	GPIOC->MODER |=  (0x2 << (SERVO3_PIN * 2)); // Alternate function
 	GPIOC->AFR[0] &= ~(0xF << (SERVO3_PIN * 4));
-	GPIOC->AFR[0] |=  (0x3 << (SERVO3_PIN * 4));
+	GPIOC->AFR[0] |=  (0x2 << (SERVO3_PIN * 4));
 
     TIM8->PSC = (FREQUENCY/1000000)-1; // Prescaler for 1 us
     TIM8->ARR = 19999; // Auto-reload for 20 ms period
@@ -217,6 +217,40 @@ void set_servo_angle(int32_t angle) {
     TIM8->CCR1 = pulse_width; // Update CCR1 with new pulse width
 }
 
+
+void uart_send_char(char c) {
+   while (!(USART2->SR & USART_SR_TXE)); // Wait until transmit data register is empty
+   USART2->DR = c; // Send character
+}
+
+void uart2_send_string(const char* str) {
+   while (*str) {
+       uart_send_char(*str++);
+   }
+}
+
+void uart2_send_int32(int32_t num) {
+   char buffer[12]; // Enough for -2147483648 and null terminator
+   snprintf(buffer, sizeof(buffer), "%ld", num);
+   uart2_send_string(buffer);
+}
+
+
+
+void send_serial_data(void) {
+    float range;
+    if (displayCm) {
+        range = pulse_width_us / 58.3f;
+    } else {
+        range = pulse_width_us / 148.0f;
+    }
+
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer),
+             "angle(deg): %d, pulsewidth (us): %lu, range: %.2f %s\r\n",
+             angle, pulse_width_us, range, displayCm ? "cm" : "inch");
+    uart2_send_string(buffer);
+}
 
 
 int main(void) {
@@ -243,7 +277,10 @@ int main(void) {
             { set_servo_angle(angle); 
             for (volatile int i = 0; i < 1000000; i++); // Delay 
             send_trigger_pulse(); 
-            for (volatile int i = 0; i < 30000; i++); // Delay } 
+            for (volatile int i = 0; i < 30000; i++); // Delay 
+
+            // Send data to serial monitor
+            send_serial_data();
             }
         }
     }
